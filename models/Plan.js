@@ -14,20 +14,11 @@ const planSchema = new mongoose.Schema({
   plan: {
     jours: [{
       jour: Number,
-      exercices: [{
-        nom: String,
-        repetitions: String,
-        duree: String,
-        completed: { type: Boolean, default: false }
-      }],
-      repas: [{
-        nom: String,
-        calories: Number,
-        ingredients: [{ nom: String, portion: String }]
-      }]
+      exercices: [{ nom: String, series: Number, repetitions: Number }],
+      repas: [{ type: String, description: String }]
     }]
   },
-  createdAt: { type: Date, default: Date.now }
+  isPublic: { type: Boolean, default: false }
 });
 
 module.exports = mongoose.model('Plan', planSchema);

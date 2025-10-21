@@ -1,35 +1,39 @@
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
-const rateLimit = require('express-rate-limit');
-const dotenv = require('dotenv');
+const authRoutes = require('./routes/auth');
+const plansRoutes = require('./routes/plans');
+const paymentsRoutes = require('./routes/payments');
+const subscriptionsRoutes = require('./routes/subscriptions');
 
-dotenv.config();
 const app = express();
 
-// CORS configuration
 app.use(cors({
-  origin: '*', // Allow only your frontend origin
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'], // Explicitly allow methods
-  allowedHeaders: ['Content-Type', 'Authorization'], // Allow necessary headers
-  credentials: true // If cookies or auth headers are used
+  origin: '*',
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
 }));
 app.use(express.json());
 
-const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 100
+mongoose.connect(process.env.MONGODB_URI, {
+  useNewUrlParser: true,
+  useUnifiedTopology: true
+}).then(() => {
+  console.log('Connecté à MongoDB');
+}).catch(err => {
+  console.error('Erreur connexion MongoDB:', err);
 });
-app.use(limiter);
 
-mongoose.connect(process.env.MONGODB_URI)
-  .then(() => console.log('Connecté à MongoDB'))
-  .catch(err => console.error('Erreur connexion MongoDB:', err));
+app.use('/api/auth', authRoutes);
+app.use('/api/plans', plansRoutes);
+app.use('/api/payments', paymentsRoutes);
+app.use('/api/subscriptions', subscriptionsRoutes);
 
-app.use('/api/auth', require('./routes/auth'));
-app.use('/api/plans', require('./routes/plans'));
-app.use('/api/subscriptions', require('./routes/subscriptions'));
-app.use('/api/users', require('./routes/users'));
+app.get('/', (req, res) => {
+  res.send('API Fitlama est en cours d\'exécution');
+});
 
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => console.log(`Serveur démarré sur le port ${PORT}`));
+app.listen(PORT, () => {
+  console.log(`Serveur démarré sur le port ${PORT}`);
+});

@@ -1,74 +1,59 @@
 const express = require('express');
-const authMiddleware = require('../middleware/auth');
-const Subscription = require('../models/Subscription');
-const paypal = require('@paypal/checkout-server-sdk');
-
 const router = express.Router();
+const axios = require('axios');
+const Subscription = require('../models/Subscription');
+const auth = require('../middleware/auth');
 
-function paypalClient() {
-  const environment = new paypal.core.SandboxEnvironment(
-    process.env.PAYPAL_CLIENT_ID,
-    process.env.PAYPAL_CLIENT_SECRET
-  );
-  return new paypal.core.PayPalHttpClient(environment);
-}
-
-router.get('/status', authMiddleware(), async (req, res) => {
+router.post('/webhook', async (req, res) => {
   try {
-    const subscription = await Subscription.findOne({ userId: req.user.id }).sort({ startDate: -1 });
-    const subscribed = subscription && subscription.endDate > new Date();
-    res.json({ subscribed });
-  } catch (err) {
-    console.error('Erreur récupération statut abonnement:', err);
-    res.status(500).json({ message: 'Erreur serveur', error: err.message });
+    const { event_type, resource } = req.body;
+
+    if (event_type === 'BILLING.SUBSCRIPTION.ACTIVATED') {
+      const subscriptionId = resource.id;
+      const plan = resource.plan_id === 'YOUR_BASIC_BUTTON_ID' ? 'basic' : 'premium';
+      const userId = resource.custom_id;
+
+      let subscription = await Subscription.findOne({ subscriptionId });
+      if (!subscription) {
+        subscription = new Subscription({
+          userId,
+          subscriptionId,
+          plan,
+          isActive: true
+        });
+      } else {
+        subscription.isActive = true;
+        subscription.plan = plan;
+      }
+      await subscription.save();
+      res.status(200).send('Webhook processed');
+    } else if (event_type === 'BILLING.SUBSCRIPTION.CANCELLED') {
+      const subscriptionId = resource.id;
+      const subscription = await Subscription.findOne({ subscriptionId });
+      if (subscription) {
+        subscription.isActive = false;
+        await subscription.save();
+      }
+      res.status(200).send('Webhook processed');
+    } else {
+      res.status(400).send('Event type not handled');
+    }
+  } catch (error) {
+    console.error('Erreur webhook:', error);
+    res.status(500).send('Erreur serveur');
   }
 });
 
-router.post('/capture-donate', authMiddleware(), async (req, res) => {
-  const { txn_id, amount, period } = req.body;
-
-  if (!txn_id || !amount || !period) {
-    return res.status(400).json({ message: 'Champs requis manquants : txn_id, amount et period sont obligatoires' });
-  }
-  if (isNaN(amount) || amount <= 0) {
-    return res.status(400).json({ message: 'Montant invalide : doit être un nombre positif' });
-  }
-  const validPeriods = ['month', 'quarter', 'year'];
-  if (!validPeriods.includes(period)) {
-    return res.status(400).json({ message: `Période invalide : doit être l'une des suivantes : ${validPeriods.join(', ')}` });
-  }
-
+router.get('/', auth, async (req, res) => {
   try {
-    const request = new paypal.orders.OrdersGetRequest(txn_id);
-    const response = await paypalClient().execute(request);
-    if (response.result.status !== 'COMPLETED') {
-      return res.status(400).json({ message: 'Don non validé' });
+    const subscription = await Subscription.findOne({ userId: req.user.id });
+    if (!subscription) {
+      return res.json({ plan: 'none', isActive: false });
     }
-
-    let endDate;
-    switch (period) {
-      case 'month':
-        endDate = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
-        break;
-      case 'quarter':
-        endDate = new Date(Date.now() + 90 * 24 * 60 * 60 * 1000);
-        break;
-      case 'year':
-        endDate = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000);
-        break;
-    }
-    const subscription = new Subscription({
-      userId: req.user.id,
-      amount,
-      period,
-      endDate,
-      orderID: txn_id
-    });
-    await subscription.save();
-    res.json({ status: 'success' });
-  } catch (err) {
-    console.error('Erreur capture don PayPal:', err);
-    res.status(500).json({ message: 'Erreur capture don PayPal', error: err.message });
+    res.json({ plan: subscription.plan, isActive: subscription.isActive });
+  } catch (error) {
+    console.error('Erreur récupération abonnement:', error);
+    res.status(500).json({ message: 'Erreur serveur' });
   }
 });
 
