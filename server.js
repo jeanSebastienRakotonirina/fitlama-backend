@@ -9,7 +9,7 @@ const app = express();
 
 // CORS configuration
 app.use(cors({
-  origin: 'https://fitlama-frontend.vercel.app', // Allow only your frontend origin
+  origin: '*', // Allow only your frontend origin
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'], // Explicitly allow methods
   allowedHeaders: ['Content-Type', 'Authorization'], // Allow necessary headers
   credentials: true // If cookies or auth headers are used
