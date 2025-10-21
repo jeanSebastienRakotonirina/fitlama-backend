@@ -7,7 +7,13 @@ const dotenv = require('dotenv');
 dotenv.config();
 const app = express();
 
-app.use(cors({ origin: process.env.FRONTEND_URL }));
+// CORS configuration
+app.use(cors({
+  origin: 'https://fitlama-frontend.vercel.app', // Allow only your frontend origin
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'], // Explicitly allow methods
+  allowedHeaders: ['Content-Type', 'Authorization'], // Allow necessary headers
+  credentials: true // If cookies or auth headers are used
+}));
 app.use(express.json());
 
 const limiter = rateLimit({
