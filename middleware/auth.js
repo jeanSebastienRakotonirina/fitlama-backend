@@ -1,7 +1,7 @@
 const jwt = require('jsonwebtoken');
 
 module.exports = (role) => (req, res, next) => {
-  const token = req.header('Authorization')?.replace('Bearer ', '');
+  const token = req.header('Authorization')?.split(' ')[1]
   if (!token) return res.status(401).json({ message: 'Aucun token fourni' });
 
   try {
