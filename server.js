@@ -5,6 +5,7 @@ const authRoutes = require('./routes/auth');
 const plansRoutes = require('./routes/plans');
 const paymentsRoutes = require('./routes/payments');
 const subscriptionsRoutes = require('./routes/subscriptions');
+require('dotenv').config(); // Add dotenv to load .env variables
 
 const app = express();
 
@@ -15,6 +16,12 @@ app.use(cors({
 }));
 app.use(express.json());
 
+// Validate MONGODB_URI
+if (!process.env.MONGODB_URI) {
+  console.error('Erreur: MONGODB_URI non défini dans le fichier .env');
+  process.exit(1);
+}
+
 mongoose.connect(process.env.MONGODB_URI, {
   useNewUrlParser: true,
   useUnifiedTopology: true
@@ -22,6 +29,7 @@ mongoose.connect(process.env.MONGODB_URI, {
   console.log('Connecté à MongoDB');
 }).catch(err => {
   console.error('Erreur connexion MongoDB:', err);
+  process.exit(1);
 });
 
 app.use('/api/auth', authRoutes);
