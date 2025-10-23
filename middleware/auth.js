@@ -1,17 +1,20 @@
-const jwt = require('jsonwebtoken');
+import jwt from 'jsonwebtoken';
+import dotenv from 'dotenv';
 
-module.exports = (role) => (req, res, next) => {
-  const token = req.header('Authorization')?.replace('Bearer ', '');
-  if (!token) return res.status(401).json({ message: 'Aucun token fourni' });
+dotenv.config();
 
+export default async function auth(req, res, next) {
   try {
+    const token = req.header('Authorization')?.split(' ')[1];
+    if (!token) {
+      console.error('Auth middleware: No token provided');
+      return res.status(401).json({ message: 'Aucun token fourni' });
+    }
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
     req.user = decoded;
-    if (role && req.user.role !== role) {
-      return res.status(403).json({ message: 'Accès non autorisé' });
-    }
     next();
-  } catch (err) {
+  } catch (error) {
+    console.error('Auth middleware error:', { message: error.message });
     res.status(401).json({ message: 'Token invalide' });
   }
-};
+}

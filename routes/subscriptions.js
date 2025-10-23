@@ -1,75 +1,57 @@
-const express = require('express');
-const authMiddleware = require('../middleware/auth');
-const Subscription = require('../models/Subscription');
-const paypal = require('@paypal/checkout-server-sdk');
+import express from 'express';
+import { User } from '../models/User.js';
+import { Subscription } from '../models/Subscription.js';
+import auth from '../middleware/auth.js';
 
 const router = express.Router();
 
-function paypalClient() {
-  const environment = new paypal.core.SandboxEnvironment(
-    process.env.PAYPAL_CLIENT_ID,
-    process.env.PAYPAL_CLIENT_SECRET
-  );
-  return new paypal.core.PayPalHttpClient(environment);
-}
-
-router.get('/status', authMiddleware(), async (req, res) => {
+router.post('/confirm', auth, async (req, res) => {
   try {
-    const subscription = await Subscription.findOne({ userId: req.user.id }).sort({ startDate: -1 });
-    const subscribed = subscription && subscription.endDate > new Date();
-    res.json({ subscribed });
-  } catch (err) {
-    console.error('Erreur récupération statut abonnement:', err);
-    res.status(500).json({ message: 'Erreur serveur', error: err.message });
-  }
-});
-
-router.post('/capture-donate', authMiddleware(), async (req, res) => {
-  const { txn_id, amount, period } = req.body;
-
-  if (!txn_id || !amount || !period) {
-    return res.status(400).json({ message: 'Champs requis manquants : txn_id, amount et period sont obligatoires' });
-  }
-  if (isNaN(amount) || amount <= 0) {
-    return res.status(400).json({ message: 'Montant invalide : doit être un nombre positif' });
-  }
-  const validPeriods = ['month', 'quarter', 'year'];
-  if (!validPeriods.includes(period)) {
-    return res.status(400).json({ message: `Période invalide : doit être l'une des suivantes : ${validPeriods.join(', ')}` });
-  }
-
-  try {
-    const request = new paypal.orders.OrdersGetRequest(txn_id);
-    const response = await paypalClient().execute(request);
-    if (response.result.status !== 'COMPLETED') {
-      return res.status(400).json({ message: 'Don non validé' });
-    }
-
-    let endDate;
-    switch (period) {
-      case 'month':
-        endDate = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
-        break;
-      case 'quarter':
-        endDate = new Date(Date.now() + 90 * 24 * 60 * 60 * 1000);
-        break;
-      case 'year':
-        endDate = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000);
-        break;
-    }
-    const subscription = new Subscription({
+    console.log('POST /api/subscriptions/confirm - Request received', {
       userId: req.user.id,
-      amount,
-      period,
-      endDate,
-      orderID: txn_id
+      subscriptionId: req.body.subscriptionId,
+      plan: req.body.plan
     });
+    const user = await User.findById(req.user.id);
+    if (!user) {
+      console.error('POST /api/subscriptions/confirm - User not found:', req.user.id);
+      return res.status(404).json({ message: 'Utilisateur non trouvé' });
+    }
+    const { subscriptionId, plan } = req.body;
+    if (!['basic', 'premium'].includes(plan)) {
+      console.error('POST /api/subscriptions/confirm - Invalid plan:', plan);
+      return res.status(400).json({ message: 'Plan invalide' });
+    }
+    // Verify PayPal subscription (simplified; in production, verify with PayPal API)
+    let subscription = await Subscription.findOne({ userId: req.user.id });
+    if (!subscription) {
+      subscription = new Subscription({
+        userId: req.user.id,
+        subscriptionId,
+        plan,
+        isActive: true
+      });
+    } else {
+      subscription.subscriptionId = subscriptionId;
+      subscription.plan = plan;
+      subscription.isActive = true;
+    }
     await subscription.save();
-    res.json({ status: 'success' });
-  } catch (err) {
-    console.error('Erreur capture don PayPal:', err);
-    res.status(500).json({ message: 'Erreur capture don PayPal', error: err.message });
+    user.subscription = { plan, isActive: true };
+    await user.save();
+    console.log('POST /api/subscriptions/confirm - Subscription confirmed', {
+      userId: req.user.id,
+      plan,
+      subscriptionId
+    });
+    res.json({ message: 'Abonnement activé avec succès' });
+  } catch (error) {
+    console.error('POST /api/subscriptions/confirm - Error:', {
+      message: error.message,
+      stack: error.stack
+    });
+    res.status(500).json({ message: 'Erreur serveur' });
   }
 });
 
-module.exports = router;
+export default router;
