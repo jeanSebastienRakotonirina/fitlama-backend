@@ -1,14 +1,16 @@
-const express = require('express');
+import express from 'express';
+import { Plan } from '../models/Plan.js';
+import auth from '../middleware/auth.js';
+import axios from 'axios';
+import { User } from '../models/User.js';
+import { Subscription } from '../models/Subscription.js';
+
 const router = express.Router();
-const Plan = require('../models/Plan');
-const auth = require('../middleware/auth');
-const axios = require('axios');
-const User = require('../models/User');
-const Subscription = require('../models/Subscription');
 
 router.post('/generate', auth, async (req, res) => {
   console.log('POST /api/plans/generate - Request received', {
     userId: req.user.id,
+    userRole: req.user.role,
     timestamp: new Date().toISOString(),
     body: req.body
   });
@@ -21,8 +23,8 @@ router.post('/generate', auth, async (req, res) => {
     }
     console.log('POST /api/plans/generate - User found:', { id: user._id, role: user.role });
 
-    if (user.role === 'user') {
-      console.error('POST /api/plans/generate - Access denied: User role is not admin or superadmin');
+    if (!['admin', 'superadmin'].includes(user.role)) {
+      console.error('POST /api/plans/generate - Access denied: User role is', user.role);
       return res.status(403).json({ message: 'Accès réservé aux admins et superadmins' });
     }
 
@@ -92,6 +94,17 @@ router.post('/generate', auth, async (req, res) => {
       return res.status(500).json({ message: 'Structure du plan invalide' });
     }
 
+    for (const jour of planData.jours) {
+      if (type === 'fitness' && (!jour.exercices || !Array.isArray(jour.exercices))) {
+        console.error('POST /api/plans/generate - Invalid fitness plan structure: Missing exercices array');
+        return res.status(500).json({ message: 'Les plans fitness doivent contenir un tableau exercices' });
+      }
+      if (type === 'nutrition' && (!jour.repas || !Array.isArray(jour.repas))) {
+        console.error('POST /api/plans/generate - Invalid nutrition plan structure: Missing repas array');
+        return res.status(500).json({ message: 'Les plans nutrition doivent contenir un tableau repas' });
+      }
+    }
+
     console.log('POST /api/plans/generate - Creating new plan in database');
     const plan = new Plan({
       userId: req.user.id,
@@ -123,16 +136,22 @@ router.post('/generate', auth, async (req, res) => {
 router.get('/', auth, async (req, res) => {
   console.log('GET /api/plans - Request received', {
     userId: req.user.id,
+    userRole: req.user.role,
     timestamp: new Date().toISOString()
   });
   try {
     console.log('GET /api/plans - Fetching user data for ID:', req.user.id);
     const user = await User.findById(req.user.id);
-    if (!user || user.role === 'user') {
-      console.error('GET /api/plans - Access denied: User role is not admin or superadmin');
-      return res.status(403).json({ message: 'Accès réservé aux admins et superadmins' });
+    if (!user) {
+      console.error('GET /api/plans - User not found:', req.user.id);
+      return res.status(404).json({ message: 'Utilisateur non trouvé' });
     }
     console.log('GET /api/plans - User found:', { id: user._id, role: user.role });
+
+    if (!['admin', 'superadmin'].includes(user.role)) {
+      console.error('GET /api/plans - Access denied: User role is', user.role);
+      return res.status(403).json({ message: 'Accès réservé aux admins et superadmins' });
+    }
 
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 2;
@@ -163,16 +182,22 @@ router.get('/', auth, async (req, res) => {
 router.get('/all', auth, async (req, res) => {
   console.log('GET /api/plans/all - Request received', {
     userId: req.user.id,
+    userRole: req.user.role,
     timestamp: new Date().toISOString()
   });
   try {
     console.log('GET /api/plans/all - Fetching user data for ID:', req.user.id);
     const user = await User.findById(req.user.id);
-    if (!user || user.role !== 'superadmin') {
+    if (!user) {
+      console.error('GET /api/plans/all - User not found:', req.user.id);
+      return res.status(404).json({ message: 'Utilisateur non trouvé' });
+    }
+    console.log('GET /api/plans/all - User found:', { id: user._id, role: user.role });
+
+    if (user.role !== 'superadmin') {
       console.error('GET /api/plans/all - Access denied: User is not superadmin');
       return res.status(403).json({ message: 'Accès réservé aux superadmins' });
     }
-    console.log('GET /api/plans/all - User found:', { id: user._id, role: user.role });
 
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 2;
@@ -203,16 +228,22 @@ router.get('/all', auth, async (req, res) => {
 router.get('/count', auth, async (req, res) => {
   console.log('GET /api/plans/count - Request received', {
     userId: req.user.id,
+    userRole: req.user.role,
     timestamp: new Date().toISOString()
   });
   try {
     console.log('GET /api/plans/count - Fetching user data for ID:', req.user.id);
     const user = await User.findById(req.user.id);
-    if (!user || user.role === 'user') {
-      console.error('GET /api/plans/count - Access denied: User role is not admin or superadmin');
-      return res.status(403).json({ message: 'Accès réservé aux admins et superadmins' });
+    if (!user) {
+      console.error('GET /api/plans/count - User not found:', req.user.id);
+      return res.status(404).json({ message: 'Utilisateur non trouvé' });
     }
     console.log('GET /api/plans/count - User found:', { id: user._id, role: user.role });
+
+    if (!['admin', 'superadmin'].includes(user.role)) {
+      console.error('GET /api/plans/count - Access denied: User role is', user.role);
+      return res.status(403).json({ message: 'Accès réservé aux admins et superadmins' });
+    }
 
     console.log('GET /api/plans/count - Counting plans for user:', req.user.id);
     const count = await Plan.countDocuments({ userId: req.user.id });
@@ -232,16 +263,22 @@ router.delete('/:id', auth, async (req, res) => {
   console.log('DELETE /api/plans/:id - Request received', {
     planId: req.params.id,
     userId: req.user.id,
+    userRole: req.user.role,
     timestamp: new Date().toISOString()
   });
   try {
     console.log('DELETE /api/plans/:id - Fetching user data for ID:', req.user.id);
     const user = await User.findById(req.user.id);
-    if (!user || user.role === 'user') {
-      console.error('DELETE /api/plans/:id - Access denied: User role is not admin or superadmin');
-      return res.status(403).json({ message: 'Accès réservé aux admins et superadmins' });
+    if (!user) {
+      console.error('DELETE /api/plans/:id - User not found:', req.user.id);
+      return res.status(404).json({ message: 'Utilisateur non trouvé' });
     }
     console.log('DELETE /api/plans/:id - User found:', { id: user._id, role: user.role });
+
+    if (!['admin', 'superadmin'].includes(user.role)) {
+      console.error('DELETE /api/plans/:id - Access denied: User role is', user.role);
+      return res.status(403).json({ message: 'Accès réservé aux admins et superadmins' });
+    }
 
     console.log('DELETE /api/plans/:id - Fetching plan data for ID:', req.params.id);
     const plan = await Plan.findById(req.params.id);
@@ -249,7 +286,7 @@ router.delete('/:id', auth, async (req, res) => {
       console.error('DELETE /api/plans/:id - Plan not found:', req.params.id);
       return res.status(404).json({ message: 'Plan non trouvé' });
     }
-    console.log('DELETE /api/plans/:id - Plan found:', { id: plan._id, type: plan.type });
+    console.log('DELETE /api/plans/:id - Plan found:', { id: plan._id, type: plantype });
 
     if (plan.userId.toString() !== req.user.id && user.role !== 'superadmin') {
       console.error('DELETE /api/plans/:id - Access denied: User not authorized to delete this plan');
@@ -269,4 +306,4 @@ router.delete('/:id', auth, async (req, res) => {
   }
 });
 
-module.exports = router;
+export default router;

@@ -1,48 +1,46 @@
-const express = require('express');
-const mongoose = require('mongoose');
-const cors = require('cors');
-const authRoutes = require('./routes/auth');
-const plansRoutes = require('./routes/plans');
-const paymentsRoutes = require('./routes/payments');
-const subscriptionsRoutes = require('./routes/subscriptions');
-const usersRoutes = require('./routes/users');
-require('dotenv').config();
+import express from 'express';
+import cors from 'cors';
+import mongoose from 'mongoose';
+import dotenv from 'dotenv';
+import authRoutes from './routes/auth.js';
+import plansRoutes from './routes/plans.js';
+import usersRoutes from './routes/users.js';
+
+dotenv.config();
 
 const app = express();
 
 app.use(cors({
   origin: '*',
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization']
+  credentials: true
 }));
 app.use(express.json());
 
-if (!process.env.MONGODB_URI) {
-  console.error('Erreur: MONGODB_URI non défini dans le fichier .env');
-  process.exit(1);
-}
-
-mongoose.connect(process.env.MONGODB_URI, {
-  useNewUrlParser: true,
-  useUnifiedTopology: true
-}).then(() => {
-  console.log('Connecté à MongoDB');
-}).catch(err => {
-  console.error('Erreur connexion MongoDB:', err);
-  process.exit(1);
-});
-
 app.use('/api/auth', authRoutes);
 app.use('/api/plans', plansRoutes);
-app.use('/api/payments', paymentsRoutes);
-app.use('/api/subscriptions', subscriptionsRoutes);
 app.use('/api/users', usersRoutes);
 
-app.get('/', (req, res) => {
-  res.send('API Fitlama est en cours d\'exécution');
-});
-
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => {
-  console.log(`Serveur démarré sur le port ${PORT}`);
-});
+
+async function startServer() {
+  try {
+    console.log('Connecting to MongoDB...');
+    await mongoose.connect(process.env.MONGODB_URI, {
+      useNewUrlParser: true,
+      useUnifiedTopology: true
+    });
+    console.log('MongoDB connected successfully');
+
+    app.listen(PORT, () => {
+      console.log(`Server running on port ${PORT}`);
+    });
+  } catch (error) {
+    console.error('Failed to connect to MongoDB:', {
+      message: error.message,
+      stack: error.stack
+    });
+    process.exit(1);
+  }
+}
+
+startServer();

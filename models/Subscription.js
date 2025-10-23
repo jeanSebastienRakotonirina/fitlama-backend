@@ -1,10 +1,10 @@
-const mongoose = require('mongoose');
+import mongoose from 'mongoose';
 
 const subscriptionSchema = new mongoose.Schema({
   userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
-  subscriptionId: { type: String, required: true, unique: true },
-  plan: { type: String, enum: ['basic', 'premium'], required: true },
-  isActive: { type: Boolean, default: false }
+  plan: { type: String, enum: ['mensuel', 'annuel'], required: true },
+  isActive: { type: Boolean, default: true },
+  createdAt: { type: Date, default: Date.now }
 });
 
-module.exports = mongoose.model('Subscription', subscriptionSchema);
+export const Subscription = mongoose.model('Subscription', subscriptionSchema);
