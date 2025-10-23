@@ -26,7 +26,8 @@ router.post('/register', async (req, res) => {
       email,
       password: hashedPassword,
       role: 'user',
-      subscription: { plan: 'none', isActive: false }
+      subscription: { plan: 'none', isActive: false },
+      profile: { age: '', taille: '', poids: '', goal: '', level: '', dietary_preference: '' }
     });
     await user.save();
     console.log('POST /api/auth/register - User created', { email });
@@ -66,7 +67,8 @@ router.post('/login', async (req, res) => {
         id: user._id,
         email: user.email,
         role: user.role,
-        subscription: user.subscription
+        subscription: user.subscription,
+        profile: user.profile || { age: '', taille: '', poids: '', goal: '', level: '', dietary_preference: '' }
       }
     });
   } catch (error) {
