@@ -2,9 +2,11 @@ const express = require('express');
 const authMiddleware = require('../middleware/auth');
 const Subscription = require('../models/Subscription');
 const paypal = require('@paypal/checkout-server-sdk');
+const { addDays, addMonths, addYears } = require('date-fns'); // npm install date-fns
 
 const router = express.Router();
 
+// PayPal Client
 function paypalClient() {
   const environment = new paypal.core.SandboxEnvironment(
     process.env.PAYPAL_CLIENT_ID,
@@ -13,10 +15,15 @@ function paypalClient() {
   return new paypal.core.PayPalHttpClient(environment);
 }
 
+// GET /api/subscription/status - Vérifie si l'utilisateur a un abonnement actif
 router.get('/status', authMiddleware(), async (req, res) => {
   try {
-    const subscription = await Subscription.findOne({ userId: req.user.id }).sort({ startDate: -1 });
-    const subscribed = subscription && subscription.endDate > new Date();
+    const subscription = await Subscription.findOne({ userId: req.user.id })
+      .sort({ startDate: -1 })
+      .lean();
+
+    const subscribed = subscription && new Date(subscription.endDate) > new Date();
+
     res.json({ subscribed });
   } catch (err) {
     console.error('Erreur récupération statut abonnement:', err);
@@ -24,51 +31,78 @@ router.get('/status', authMiddleware(), async (req, res) => {
   }
 });
 
+// POST /api/subscription/capture-donate - Capture un paiement PayPal et active l'abonnement
 router.post('/capture-donate', authMiddleware(), async (req, res) => {
   const { txn_id, amount, period } = req.body;
 
+  // Validation des champs
   if (!txn_id || !amount || !period) {
-    return res.status(400).json({ message: 'Champs requis manquants : txn_id, amount et period sont obligatoires' });
+    return res.status(400).json({
+      message: 'Champs requis manquants : txn_id, amount et period sont obligatoires'
+    });
   }
+
   if (isNaN(amount) || amount <= 0) {
-    return res.status(400).json({ message: 'Montant invalide : doit être un nombre positif' });
+    return res.status(400).json({
+      message: 'Montant invalide : doit être un nombre positif'
+    });
   }
-  const validPeriods = ['month', 'quarter', 'year'];
+
+  const validPeriods = ['week', 'month', 'year'];
   if (!validPeriods.includes(period)) {
-    return res.status(400).json({ message: `Période invalide : doit être l'une des suivantes : ${validPeriods.join(', ')}` });
+    return res.status(400).json({
+      message: `Période invalide. Valeurs acceptées : ${validPeriods.join(', ')}`
+    });
   }
 
   try {
+    // Vérifie que la commande PayPal est bien COMPLETED
     const request = new paypal.orders.OrdersGetRequest(txn_id);
     const response = await paypalClient().execute(request);
+
     if (response.result.status !== 'COMPLETED') {
-      return res.status(400).json({ message: 'Don non validé' });
+      return res.status(400).json({ message: 'Paiement non finalisé (statut ≠ COMPLETED)' });
     }
 
+    // Calcul de la date de fin selon la période
     let endDate;
+    const now = new Date();
+
     switch (period) {
-      case 'month':
-        endDate = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+      case 'week':
+        endDate = addDays(now, 7);
         break;
-      case 'quarter':
-        endDate = new Date(Date.now() + 90 * 24 * 60 * 60 * 1000);
+      case 'month':
+        endDate = addMonths(now, 1);
         break;
       case 'year':
-        endDate = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000);
+        endDate = addYears(now, 1);
         break;
+      default:
+        return res.status(400).json({ message: 'Période non gérée' });
     }
+
+    // Sauvegarde de l'abonnement
     const subscription = new Subscription({
       userId: req.user.id,
-      amount,
+      amount: parseFloat(amount),
       period,
+      startDate: now,
       endDate,
-      orderID: txn_id
+      orderID: txn_id,
+      status: 'active'
     });
+
     await subscription.save();
-    res.json({ status: 'success' });
+
+    console.log(`Abonnement ${period} activé pour user ${req.user.id} - Order: ${txn_id}`);
+    res.json({ status: 'success', message: 'Abonnement activé avec succès' });
   } catch (err) {
-    console.error('Erreur capture don PayPal:', err);
-    res.status(500).json({ message: 'Erreur capture don PayPal', error: err.message });
+    console.error('Erreur capture don PayPal:', err.response?.data || err.message);
+    res.status(500).json({
+      message: 'Erreur lors de la validation du paiement PayPal',
+      error: err.message
+    });
   }
 });
 
