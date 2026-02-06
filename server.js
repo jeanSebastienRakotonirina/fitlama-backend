@@ -17,9 +17,12 @@ app.use(cors({
 app.use(express.json());
 
 const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 100
-});
+windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 5,                   // 5 tentatives
+  message: 'Trop de tentatives de connexion. Réessayez dans 15 minutes.',
+  standardHeaders: true,    // retourne les headers RateLimit-*
+  legacyHeaders: false,     // désactive les anciens headers X-RateLimit-*
+  });
 app.use(limiter);
 
 mongoose.connect(process.env.MONGODB_URI)
