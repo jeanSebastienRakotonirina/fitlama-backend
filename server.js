@@ -5,6 +5,7 @@ const rateLimit = require('express-rate-limit');
 const dotenv = require('dotenv');
 
 dotenv.config();
+app.set('trust proxy', 1);  // 1 = faire confiance au premier proxy (le plus courant)
 const app = express();
 
 // CORS configuration
