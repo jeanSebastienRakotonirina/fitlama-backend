@@ -3,7 +3,7 @@ const mongoose = require('mongoose');
 const cors = require('cors');
 const rateLimit = require('express-rate-limit');
 const dotenv = require('dotenv');
-
+const app = express();  // ← C’EST ICI qu’on définit app
 dotenv.config();
 
 // CORS configuration
