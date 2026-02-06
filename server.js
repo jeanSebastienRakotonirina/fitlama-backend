@@ -5,7 +5,6 @@ const rateLimit = require('express-rate-limit');
 const dotenv = require('dotenv');
 
 dotenv.config();
-app.set('trust proxy', true); // accepte tous les proxies (moins strict mais très courant)const app = express();
 
 // CORS configuration
 app.use(cors({
@@ -14,6 +13,8 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'Authorization'], // Allow necessary headers
   credentials: true // If cookies or auth headers are used
 }));
+
+app.set('trust proxy', true); // accepte tous les proxies (moins strict mais très courant)const app = express();
 app.use(express.json());
 
 const limiter = rateLimit({
