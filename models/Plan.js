@@ -14,9 +14,9 @@ const planSchema = new mongoose.Schema({
   plan: {
     jours: [{
       jour: { 
-        type: String,  // ← Changed from Number to String
-        enum: ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi', 'Dimanche'], // Optional but recommended
-        required: true 
+        type: String,
+        enum: ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi', 'Dimanche'],
+        required: true
       },
       exercices: [{
         nom: String,
