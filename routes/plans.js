@@ -48,22 +48,83 @@ router.post('/generate', authMiddleware(), async (req, res) => {
       ? `Générez un plan d'entraînement hebdomadaire (7 jours) pour une personne de ${profile.age} ans, ${profile.taille} cm, ${profile.poids} kg, objectif: ${profile.goal}, niveau: ${profile.level}. Fournissez UNIQUEMENT un objet JSON valide sans texte supplémentaire...`
       : `Générez un plan nutritionnel hebdomadaire ...`; // your existing prompt
 
-    const response = await axios.post(
-      'https://openrouter.ai/api/v1/chat/completions',
-      {
-        model: process.env.OPENROUTER_MODEL,
-        messages: [{ role: 'user', content: prompt }],
-        temperature: 0.25,           // ← lower = more deterministic JSON
-        max_tokens: 2000
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
-          'Content-Type': 'application/json'
-        }
-      }
-    );
+const response = await axios.post('https://openrouter.ai/api/v1/chat/completions', {
+  model: process.env.OPENROUTER_MODEL,
+  messages: [{ role: 'user', content: prompt }],
+  temperature: 0.2, // lower = more deterministic
 
+  response_format: {
+    type: 'json_schema',
+    json_schema: {
+      name: type === 'fitness' ? 'weekly_fitness_plan' : 'weekly_nutrition_plan',
+      strict: true,
+      schema: {
+        type: 'object',
+        properties: {
+          jours: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                jour: {
+                  type: 'integer',           // ← enforced as number
+                  minimum: 1,
+                  maximum: 7,
+                  description: '1 = Lundi, 2 = Mardi, ..., 7 = Dimanche'
+                },
+                exercices: {                 // for fitness
+                  type: 'array',
+                  items: {
+                    type: 'object',
+                    properties: {
+                      nom: { type: 'string' },
+                      repetitions: { type: 'string' },
+                      duree: { type: 'string' }
+                    },
+                    required: ['nom'],
+                    additionalProperties: true // allow completed etc.
+                  }
+                },
+                repas: {                     // for nutrition – can be empty for fitness
+                  type: 'array',
+                  items: {
+                    type: 'object',
+                    properties: {
+                      nom: { type: 'string' },
+                      calories: { type: 'number' },
+                      ingredients: {
+                        type: 'array',
+                        items: {
+                          type: 'object',
+                          properties: {
+                            nom: { type: 'string' },
+                            portion: { type: 'string' }
+                          }
+                        }
+                      }
+                    },
+                    required: ['nom']
+                  }
+                }
+              },
+              required: ['jour'],
+              additionalProperties: false
+            },
+            minItems: 7,
+            maxItems: 7
+          }
+        },
+        required: ['jours'],
+        additionalProperties: false
+      }
+    }
+  }
+}, {
+  headers: {
+    Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
+    'Content-Type': 'application/json'
+  }
+});
     // ── Robust JSON extraction ──────────────────────────────────
     let content = response.data.choices[0].message.content.trim();
     content = content.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '');
