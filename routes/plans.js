@@ -16,7 +16,7 @@ router.get('/', authMiddleware(), async (req, res) => {
   }
 });
 
-// GET /plans/check-limit → vérifie si l'utilisateur a atteint la limite gratuite (3 plans)
+// GET /plans/check-limit → vérifie la limite gratuite
 router.get('/check-limit', authMiddleware(), async (req, res) => {
   try {
     const planCount = await Plan.countDocuments({ userId: req.user.id });
@@ -27,7 +27,7 @@ router.get('/check-limit', authMiddleware(), async (req, res) => {
   }
 });
 
-// POST /plans/generate → génération du plan (fitness ou nutrition)
+// POST /plans/generate → génération du plan
 router.post('/generate', authMiddleware(), async (req, res) => {
   const { type, profile } = req.body;
 
@@ -50,7 +50,6 @@ router.post('/generate', authMiddleware(), async (req, res) => {
   }
 
   try {
-    // Vérification de la limite gratuite
     const planCount = await Plan.countDocuments({ userId: req.user.id });
     if (planCount >= 3) {
       return res.status(403).json({
@@ -58,32 +57,29 @@ router.post('/generate', authMiddleware(), async (req, res) => {
       });
     }
 
-    // ── Construction du prompt ─────────────────────────────────────
+    // ── Prompt ─────────────────────────────────────────────────────
     const prompt = type === 'fitness'
       ? `Générez un plan d'entraînement hebdomadaire (7 jours) pour une personne de ${profile.age} ans, ${profile.taille} cm, ${profile.poids} kg, objectif: ${profile.goal}, niveau: ${profile.level}.
-Fournissez UNIQUEMENT un objet JSON valide, sans texte supplémentaire, sans \`\`\`json, sans commentaires.
+Fournissez UNIQUEMENT un objet JSON valide, sans texte supplémentaire, sans \`\`\`json.
 
 Format exact :
 {
   "jours": [
-    { "jour": 1, "exercices": [{ "nom": "", "repetitions": "", "duree": "" }, ...] },
-    { "jour": 2, "exercices": [...] },
+    { "jour": 1, "exercices": [{ "nom": "", "repetitions": "", "duree": "" }] },
     ...
-    { "jour": 7, "exercices": [...] }
   ]
 }`
       : `Générez un plan nutritionnel hebdomadaire (7 jours) pour une personne de ${profile.age} ans, ${profile.taille} cm, ${profile.poids} kg, objectif: ${profile.goal}, préférence alimentaire: ${profile.dietary_preference}.
-Fournissez UNIQUEMENT un objet JSON valide, sans texte supplémentaire, sans \`\`\`json, sans commentaires.
+Fournissez UNIQUEMENT un objet JSON valide, sans texte supplémentaire, sans \`\`\`json.
 
 Format exact :
 {
   "jours": [
-    { "jour": 1, "repas": [{ "nom": "", "calories": 0, "ingredients": [{ "nom": "", "portion": "" }] }, ...] },
+    { "jour": 1, "repas": [{ "nom": "", "calories": 0, "ingredients": [{ "nom": "", "portion": "" }] }] },
     ...
   ]
 }`;
 
-    // ── Appel à OpenRouter ─────────────────────────────────────────
     const response = await axios.post(
       'https://openrouter.ai/api/v1/chat/completions',
       {
@@ -100,13 +96,9 @@ Format exact :
       }
     );
 
-    // ── Extraction robuste du JSON (gère les fences, texte parasite, etc.) ──
+    // ── Extraction robuste du JSON ────────────────────────────────
     let content = response.data.choices[0].message.content.trim();
-
-    // Supprime les balises markdown courantes
     content = content.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '');
-
-    // Extrait le premier objet JSON complet
     const jsonMatch = content.match(/\{[\s\S]*\}/);
     if (jsonMatch) content = jsonMatch[0];
 
@@ -114,42 +106,35 @@ Format exact :
     try {
       planData = JSON.parse(content);
     } catch (parseErr) {
-      console.error('LLM JSON invalide:', parseErr, '\nContenu brut:', content);
+      console.error('JSON invalide:', parseErr);
       return res.status(503).json({ message: 'Le modèle n’a pas renvoyé un JSON valide. Réessayez.' });
     }
 
-    // ── Normalisation du champ "jour" (gère "Lundi" → 1, "Mardi" → 2, etc.) ──
+    // ── Normalisation du champ "jour" (Lundi → 1, etc.) ───────────
     const dayMap = {
       'Lundi': 1, 'Mardi': 2, 'Mercredi': 3, 'Jeudi': 4, 'Vendredi': 5, 'Samedi': 6, 'Dimanche': 7,
-      'Monday': 1, 'Tuesday': 2, 'Wednesday': 3, 'Thursday': 4, 'Friday': 5, 'Saturday': 6, 'Sunday': 7,
-      'lun': 1, 'mar': 2, 'mer': 3, 'jeu': 4, 'ven': 5, 'sam': 6, 'dim': 7
+      'Monday': 1, 'Tuesday': 2, 'Wednesday': 3, 'Thursday': 4, 'Friday': 5, 'Saturday': 6, 'Sunday': 7
     };
 
     if (planData.jours && Array.isArray(planData.jours)) {
       planData.jours = planData.jours.map((day, index) => {
         let jourValue = day.jour;
-
         if (typeof jourValue === 'string') {
           const normalized = jourValue.trim().toLowerCase();
           jourValue = dayMap[normalized] || dayMap[jourValue] || (index + 1);
         }
-
         jourValue = Number(jourValue);
-        if (isNaN(jourValue) || jourValue < 1 || jourValue > 7) {
-          jourValue = index + 1;
-        }
-
+        if (isNaN(jourValue) || jourValue < 1 || jourValue > 7) jourValue = index + 1;
         return { ...day, jour: jourValue };
       });
     }
 
-    // ── Sauvegarde dans MongoDB ────────────────────────────────────
+    // ── Sauvegarde ─────────────────────────────────────────────────
     const plan = new Plan({
       userId: req.user.id,
       type,
       profile,
       plan: planData
-      // createdAt est géré par le schéma (default: Date.now)
     });
 
     await plan.save();
@@ -158,13 +143,13 @@ Format exact :
     console.error('Erreur génération plan:', err);
     const status = err.response?.status || 500;
     res.status(status).json({
-      message: status === 429 ? 'Limite de l’API atteinte, réessayez plus tard' : 'Erreur lors de la génération du plan',
+      message: status === 429 ? 'Limite de l’API atteinte' : 'Erreur lors de la génération du plan',
       error: err.message
     });
   }
 });
 
-// DELETE /plans/:id → suppression (admin uniquement)
+// DELETE /plans/:id (admin only)
 router.delete('/:id', authMiddleware('admin'), async (req, res) => {
   try {
     await Plan.findByIdAndDelete(req.params.id);
