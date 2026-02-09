@@ -1,3 +1,26 @@
+const express = require('express');
+const axios = require('axios');
+const authMiddleware = require('../middleware/auth');
+const Plan = require('../models/Plan');
+const router = express.Router();
+router.get('/', authMiddleware(), async (req, res) => {
+  try {
+    const plans = await Plan.find({ userId: req.user.id });
+    res.json(plans);
+  } catch (err) {
+    console.error('Erreur récupération plans:', err);
+    res.status(500).json({ message: 'Erreur récupération plans', error: err.message });
+  }
+});
+router.get('/check-limit', authMiddleware(), async (req, res) => {
+  try {
+    const planCount = await Plan.countDocuments({ userId: req.user.id });
+    res.json({ hasReachedLimit: planCount >= 3 });
+  } catch (err) {
+    console.error('Erreur vérification limite plans:', err);
+    res.status(500).json({ message: 'Erreur vérification limite plans', error: err.message });
+  }
+});
 router.post('/generate', authMiddleware(), async (req, res) => {
   const { type, profile } = req.body;
 
@@ -74,3 +97,13 @@ router.post('/generate', authMiddleware(), async (req, res) => {
     });
   }
 });
+router.delete('/:id', authMiddleware('admin'), async (req, res) => {
+  try {
+    await Plan.findByIdAndDelete(req.params.id);
+    res.json({ message: 'Plan supprimé' });
+  } catch (err) {
+    console.error('Erreur suppression plan:', err);
+    res.status(500).json({ message: 'Erreur suppression plan', error: err.message });
+  }
+});
+module.exports = router;
