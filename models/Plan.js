@@ -11,12 +11,11 @@ const planSchema = new mongoose.Schema({
     level: String,
     dietary_preference: String
   },
-plan: {
+  plan: {
     jours: [{
       jour: { 
-        type: String,                    // ← changed from Number
-        // Optional: enforce valid French day names
-        enum: ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi', 'Dimanche'],
+        type: String,  // ← Changed from Number to String
+        enum: ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi', 'Dimanche'], // Optional but recommended
         required: true 
       },
       exercices: [{
