@@ -31,7 +31,7 @@ plan: {
         ingredients: [{ nom: String, portion: String }]
       }]
     }]
-  },  },
+  },
   createdAt: { type: Date, default: Date.now }
 });
 
