@@ -5,7 +5,7 @@ const Plan = require('../models/Plan');
 
 const router = express.Router();
 
-// GET /plans → liste des plans de l'utilisateur
+// Liste des plans de l'utilisateur
 router.get('/', authMiddleware(), async (req, res) => {
   try {
     const plans = await Plan.find({ userId: req.user.id }).sort({ createdAt: -1 });
@@ -16,24 +16,24 @@ router.get('/', authMiddleware(), async (req, res) => {
   }
 });
 
-// GET /plans/check-limit → vérifie la limite gratuite
+// Vérifie si limite atteinte (3 plans gratuits)
 router.get('/check-limit', authMiddleware(), async (req, res) => {
   try {
     const planCount = await Plan.countDocuments({ userId: req.user.id });
     res.json({ hasReachedLimit: planCount >= 3 });
   } catch (err) {
-    console.error('Erreur vérification limite plans:', err);
-    res.status(500).json({ message: 'Erreur vérification limite plans', error: err.message });
+    console.error('Erreur vérification limite:', err);
+    res.status(500).json({ message: 'Erreur vérification limite', error: err.message });
   }
 });
 
-// POST /plans/generate → génération du plan
+// Génération du plan
 router.post('/generate', authMiddleware(), async (req, res) => {
   const { type, profile } = req.body;
 
-  // ── Validation des entrées ─────────────────────────────────────
+  // Validation basique
   if (!['fitness', 'nutrition'].includes(type)) {
-    return res.status(400).json({ message: 'Type de plan invalide (fitness ou nutrition uniquement)' });
+    return res.status(400).json({ message: 'Type invalide (fitness ou nutrition)' });
   }
 
   if (!profile || typeof profile !== 'object') {
@@ -53,29 +53,37 @@ router.post('/generate', authMiddleware(), async (req, res) => {
     const planCount = await Plan.countDocuments({ userId: req.user.id });
     if (planCount >= 3) {
       return res.status(403).json({
-        message: 'Vous avez déjà 3 plans. Abonnez-vous pour générer des plans supplémentaires.'
+        message: 'Vous avez déjà 3 plans gratuits. Abonnez-vous pour en créer plus.'
       });
     }
 
-    // ── Prompt ─────────────────────────────────────────────────────
+    // Prompt (très clair sur le fait qu'on veut des noms de jours en français)
     const prompt = type === 'fitness'
-      ? `Générez un plan d'entraînement hebdomadaire (7 jours) pour une personne de ${profile.age} ans, ${profile.taille} cm, ${profile.poids} kg, objectif: ${profile.goal}, niveau: ${profile.level}.
-Fournissez UNIQUEMENT un objet JSON valide, sans texte supplémentaire, sans \`\`\`json.
+      ? `Générez un plan d'entraînement hebdomadaire sur 7 jours pour une personne de ${profile.age} ans, ${profile.taille} cm, ${profile.poids} kg, objectif : ${profile.goal}, niveau : ${profile.level}.
 
-Format exact :
+Réponds UNIQUEMENT avec un objet JSON valide, sans aucun texte avant/après, sans \`\`\`json, sans commentaires.
+
+Utilise obligatoirement les noms de jours en français pour le champ "jour" : "Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi", "Dimanche".
+
+Format exact attendu :
 {
   "jours": [
-    { "jour": 1, "exercices": [{ "nom": "", "repetitions": "", "duree": "" }] },
+    { "jour": "Lundi", "exercices": [{ "nom": "...", "repetitions": "...", "duree": "..." }, ...] },
+    { "jour": "Mardi", "exercices": [...] },
     ...
+    { "jour": "Dimanche", "exercices": [...] }
   ]
 }`
-      : `Générez un plan nutritionnel hebdomadaire (7 jours) pour une personne de ${profile.age} ans, ${profile.taille} cm, ${profile.poids} kg, objectif: ${profile.goal}, préférence alimentaire: ${profile.dietary_preference}.
-Fournissez UNIQUEMENT un objet JSON valide, sans texte supplémentaire, sans \`\`\`json.
+      : `Générez un plan nutritionnel hebdomadaire sur 7 jours pour une personne de ${profile.age} ans, ${profile.taille} cm, ${profile.poids} kg, objectif : ${profile.goal}, préférence alimentaire : ${profile.dietary_preference}.
 
-Format exact :
+Réponds UNIQUEMENT avec un objet JSON valide, sans aucun texte avant/après, sans \`\`\`json, sans commentaires.
+
+Utilise obligatoirement les noms de jours en français pour le champ "jour" : "Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi", "Dimanche".
+
+Format exact attendu :
 {
   "jours": [
-    { "jour": 1, "repas": [{ "nom": "", "calories": 0, "ingredients": [{ "nom": "", "portion": "" }] }] },
+    { "jour": "Lundi", "repas": [{ "nom": "...", "calories": 0, "ingredients": [{ "nom": "...", "portion": "..." }] }, ...] },
     ...
   ]
 }`;
@@ -85,7 +93,7 @@ Format exact :
       {
         model: process.env.OPENROUTER_MODEL,
         messages: [{ role: 'user', content: prompt }],
-        temperature: 0.2,
+        temperature: 0.25,
         max_tokens: 2500
       },
       {
@@ -96,40 +104,26 @@ Format exact :
       }
     );
 
-    // ── Extraction robuste du JSON ────────────────────────────────
     let content = response.data.choices[0].message.content.trim();
+
+    // Nettoyage robuste
     content = content.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '');
-    const jsonMatch = content.match(/\{[\s\S]*\}/);
-    if (jsonMatch) content = jsonMatch[0];
+    const match = content.match(/\{[\s\S]*\}/);
+    if (match) content = match[0];
 
     let planData;
     try {
       planData = JSON.parse(content);
-    } catch (parseErr) {
-      console.error('JSON invalide:', parseErr);
-      return res.status(503).json({ message: 'Le modèle n’a pas renvoyé un JSON valide. Réessayez.' });
+    } catch (e) {
+      console.error('Parse JSON échoué:', e, '\nContenu brut:', content);
+      return res.status(503).json({ message: 'Le modèle n’a pas retourné un JSON valide. Réessayez.' });
     }
 
-    // ── Normalisation du champ "jour" (Lundi → 1, etc.) ───────────
-    const dayMap = {
-      'Lundi': 1, 'Mardi': 2, 'Mercredi': 3, 'Jeudi': 4, 'Vendredi': 5, 'Samedi': 6, 'Dimanche': 7,
-      'Monday': 1, 'Tuesday': 2, 'Wednesday': 3, 'Thursday': 4, 'Friday': 5, 'Saturday': 6, 'Sunday': 7
-    };
-
-    if (planData.jours && Array.isArray(planData.jours)) {
-      planData.jours = planData.jours.map((day, index) => {
-        let jourValue = day.jour;
-        if (typeof jourValue === 'string') {
-          const normalized = jourValue.trim().toLowerCase();
-          jourValue = dayMap[normalized] || dayMap[jourValue] || (index + 1);
-        }
-        jourValue = Number(jourValue);
-        if (isNaN(jourValue) || jourValue < 1 || jourValue > 7) jourValue = index + 1;
-        return { ...day, jour: jourValue };
-      });
+    // Vérification minimale de structure
+    if (!planData.jours || !Array.isArray(planData.jours) || planData.jours.length !== 7) {
+      return res.status(503).json({ message: 'Structure du plan invalide (7 jours attendus)' });
     }
 
-    // ── Sauvegarde ─────────────────────────────────────────────────
     const plan = new Plan({
       userId: req.user.id,
       type,
@@ -143,20 +137,20 @@ Format exact :
     console.error('Erreur génération plan:', err);
     const status = err.response?.status || 500;
     res.status(status).json({
-      message: status === 429 ? 'Limite de l’API atteinte' : 'Erreur lors de la génération du plan',
+      message: status === 429 ? 'Limite API atteinte' : 'Erreur lors de la génération',
       error: err.message
     });
   }
 });
 
-// DELETE /plans/:id (admin only)
+// Suppression (admin seulement)
 router.delete('/:id', authMiddleware('admin'), async (req, res) => {
   try {
     await Plan.findByIdAndDelete(req.params.id);
-    res.json({ message: 'Plan supprimé avec succès' });
+    res.json({ message: 'Plan supprimé' });
   } catch (err) {
-    console.error('Erreur suppression plan:', err);
-    res.status(500).json({ message: 'Erreur suppression plan', error: err.message });
+    console.error('Erreur suppression:', err);
+    res.status(500).json({ message: 'Erreur suppression', error: err.message });
   }
 });
 
