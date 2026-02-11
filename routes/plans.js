@@ -26,11 +26,11 @@ router.get('/check-limit', authMiddleware(), async (req, res) => {
   }
 });
 
-// Génération du plan
+// Génération du plan – avec Google Gemini (compatibilité OpenAI)
 router.post('/generate', authMiddleware(), async (req, res) => {
   const { type, profile } = req.body;
 
-  // Validation basique
+  // Validation basique (inchangée)
   if (!['fitness', 'nutrition'].includes(type)) {
     return res.status(400).json({ message: 'Type invalide (fitness ou nutrition)' });
   }
@@ -56,52 +56,52 @@ router.post('/generate', authMiddleware(), async (req, res) => {
       });
     }
 
-    // Prompts renforcés et plus compacts
-    const fitnessPrompt = `Génère UNIQUEMENT un JSON valide pour un plan d'entraînement hebdomadaire (7 jours) pour une personne de ${age} ans, ${taille} cm, ${poids} kg, objectif : ${goal || 'général'}, niveau : ${level || 'débutant'}.
-Noms de jours obligatoirement en français : Lundi, Mardi, Mercredi, Jeudi, Vendredi, Samedi, Dimanche.
-Format exact (rien d'autre) :
+    // Prompts (très similaires, mais optimisés pour Gemini – il suit bien les instructions strictes)
+    const fitnessPrompt = `Génère UNIQUEMENT un JSON valide, sans aucun texte avant ou après, sans markdown, sans \`\`\`.
+Plan d'entraînement hebdomadaire sur exactement 7 jours pour ${age} ans, ${taille} cm, ${poids} kg, objectif : ${goal || 'général'}, niveau : ${level || 'débutant'}.
+Noms de jours obligatoirement : Lundi, Mardi, Mercredi, Jeudi, Vendredi, Samedi, Dimanche.
+Format exact :
 {
   "jours": [
-    {"jour": "Lundi", "exercices": [{"nom": "...", "repetitions": "...", "duree": "...", "series": ...}, ...]},
-    {"jour": "Mardi", "exercices": [...]},
+    {"jour": "Lundi", "exercices": [{"nom": "string", "series": number, "repetitions": "string", "duree": "string"}, ...]},
     ...
     {"jour": "Dimanche", "exercices": [...]}
   ]
-}
-JSON complet, valide, sans texte avant/après, sans markdown, sans commentaires.`;
+}`;
 
-    const nutritionPrompt = `Génère UNIQUEMENT un JSON valide pour un plan nutritionnel hebdomadaire (exactement 7 jours) pour une personne de ${age} ans, ${taille} cm, ${poids} kg, objectif : ${goal || 'équilibre'}, préférence : ${dietary_preference || 'aucune'}.
-Noms de jours en français uniquement : Lundi, Mardi, Mercredi, Jeudi, Vendredi, Samedi, Dimanche.
-Format exact (rien d'autre) :
+    const nutritionPrompt = `Génère UNIQUEMENT un JSON valide, sans texte avant/après, sans markdown, sans \`\`\`.
+Plan nutritionnel sur exactement 7 jours pour ${age} ans, ${taille} cm, ${poids} kg, objectif : ${goal || 'équilibre'}, préférence : ${dietary_preference || 'aucune'}.
+Noms de jours en français uniquement.
+Format exact :
 {
   "jours": [
     {
       "jour": "Lundi",
       "repas": [
-        {"nom": "Petit déjeuner", "calories": NNN, "ingredients": [{"nom": "...", "portion": "..."}, ...]},
-        {"nom": "Déjeuner", "calories": NNN, "ingredients": [...]},
-        {"nom": "Dîner", "calories": NNN, "ingredients": [...]}
+        {"nom": "Petit déjeuner", "calories": number, "ingredients": [{"nom": "string", "portion": "string"}, ...]},
+        {"nom": "Déjeuner", "calories": number, "ingredients": [...]},
+        {"nom": "Dîner", "calories": number, "ingredients": [...]}
       ]
     },
-    // exactement 6 jours supplémentaires identiques en structure
+    // exactement 6 jours de plus
   ]
 }
-Toujours 3 repas par jour. calories = entier. portion = chaîne courte. JSON complet et valide, sans texte supplémentaire ni markdown.`;
+Toujours 3 repas par jour. calories entier. portion courte. JSON complet.`;
 
     const prompt = type === 'fitness' ? fitnessPrompt : nutritionPrompt;
 
     const response = await axios.post(
-      'https://openrouter.ai/api/v1/chat/completions',
+      'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
       {
-        model: process.env.OPENROUTER_MODEL,
+        model: process.env.GEMINI_MODEL || 'gemini-2.0-flash',  // ← change ici si besoin (gemini-2.5-flash, etc.)
         messages: [{ role: 'user', content: prompt }],
-        temperature: 0.2,           // plus bas = plus déterministe
-        max_tokens: 1000,           // augmentation significative
-        top_p: 0.9
+        temperature: 0.2,
+        max_tokens: 3200,           // Gemini tolère bien plus → on monte un peu
+        top_p: 0.95
       },
       {
         headers: {
-          Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
+          Authorization: `Bearer ${process.env.GEMINI_API_KEY}`,
           'Content-Type': 'application/json'
         }
       }
@@ -109,35 +109,30 @@ Toujours 3 repas par jour. calories = entier. portion = chaîne courte. JSON com
 
     let content = response.data.choices[0].message.content?.trim() || '';
 
-    // Nettoyage agressif
+    // Nettoyage (Gemini est souvent propre, mais on garde la robustesse)
     content = content
       .replace(/^```(?:json)?\s*/i, '')
       .replace(/\s*```$/i, '')
-      .replace(/^\s*{\s*/, '{')
-      .replace(/\s*}\s*$/, '}');
+      .trim();
 
-    // Extraction du bloc JSON le plus probable
     const jsonMatch = content.match(/\{[\s\S]*\}/);
-    if (jsonMatch) {
-      content = jsonMatch[0];
-    }
+    if (jsonMatch) content = jsonMatch[0];
 
     let planData;
     try {
       planData = JSON.parse(content);
     } catch (parseError) {
-      console.error('[PARSE ERROR] Message:', parseError.message);
-      console.error('[PARSE ERROR] Position:', parseError.message.match(/position (\d+)/)?.[1] || 'inconnue');
-      console.error('[PARSE ERROR] Contenu brut (premiers 1200 caractères):');
-      console.error(content.substring(0, 1200) + (content.length > 1200 ? '...' : ''));
+      console.error('[GEMINI PARSE ERROR]', parseError.message);
+      console.error('Position:', parseError.message.match(/position (\d+)/)?.[1] || 'inconnue');
+      console.error('Contenu brut (1200 premiers):', content.substring(0, 1200) + '...');
 
       return res.status(503).json({
-        message: 'Le modèle n’a pas retourné un JSON valide ou complet. Veuillez réessayer.',
-        debug: process.env.NODE_ENV === 'development' ? { rawPreview: content.substring(0, 600) } : undefined
+        message: 'Gemini n’a pas retourné un JSON valide. Réessayez plus tard.',
+        debug: process.env.NODE_ENV === 'development' ? { preview: content.substring(0, 600) } : undefined
       });
     }
 
-    // Vérifications structurelles renforcées
+    // Vérifications structurelles (inchangées)
     if (!planData.jours || !Array.isArray(planData.jours) || planData.jours.length !== 7) {
       return res.status(503).json({
         message: `Structure invalide : ${planData.jours?.length || 0} jour(s) au lieu de 7`
@@ -148,21 +143,21 @@ Toujours 3 repas par jour. calories = entier. portion = chaîne courte. JSON com
 
     for (const jour of planData.jours) {
       if (!validDays.includes(jour.jour)) {
-        return res.status(503).json({ message: `Nom de jour invalide : ${jour.jour}` });
+        return res.status(503).json({ message: `Jour invalide : ${jour.jour}` });
       }
 
       if (type === 'nutrition') {
         if (!jour.repas || !Array.isArray(jour.repas) || jour.repas.length < 2) {
-          return res.status(503).json({ message: `Jour ${jour.jour} : repas manquants ou invalides` });
+          return res.status(503).json({ message: `Jour ${jour.jour} : repas manquants` });
         }
-      } else if (type === 'fitness') {
+      } else {
         if (!jour.exercices || !Array.isArray(jour.exercices)) {
           return res.status(503).json({ message: `Jour ${jour.jour} : exercices manquants` });
         }
       }
     }
 
-    // Tout est OK → sauvegarde
+    // Sauvegarde
     const plan = new Plan({
       userId: req.user.id,
       type,
@@ -175,16 +170,16 @@ Toujours 3 repas par jour. calories = entier. portion = chaîne courte. JSON com
     res.json(plan);
 
   } catch (err) {
-    console.error('Erreur génération plan:', err);
+    console.error('Erreur génération plan (Gemini):', err?.response?.data || err.message);
     const status = err.response?.status || 500;
     res.status(status).json({
-      message: status === 429 ? 'Limite API atteinte' : 'Erreur lors de la génération du plan',
+      message: status === 429 ? 'Limite Gemini atteinte' : 'Erreur lors de la génération',
       error: err.message
     });
   }
 });
 
-// Suppression (admin seulement)
+// Suppression (admin)
 router.delete('/:id', authMiddleware('admin'), async (req, res) => {
   try {
     await Plan.findByIdAndDelete(req.params.id);
