@@ -96,7 +96,7 @@ Toujours 3 repas par jour. calories = entier. portion = chaîne courte. JSON com
         model: process.env.OPENROUTER_MODEL,
         messages: [{ role: 'user', content: prompt }],
         temperature: 0.2,           // plus bas = plus déterministe
-        max_tokens: 2800,           // augmentation significative
+        max_tokens: 1000,           // augmentation significative
         top_p: 0.9
       },
       {
