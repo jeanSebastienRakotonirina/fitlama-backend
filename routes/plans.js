@@ -94,7 +94,7 @@ Format exact attendu :
         model: process.env.OPENROUTER_MODEL,
         messages: [{ role: 'user', content: prompt }],
         temperature: 0.25,
-        max_tokens: 1000
+        max_tokens: 2500
       },
       {
         headers: {
