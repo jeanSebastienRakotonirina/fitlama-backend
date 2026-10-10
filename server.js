@@ -1,89 +1,144 @@
-// server.js (ou index.js)
-
 import express from 'express';
 import cors from 'cors';
 import rateLimit from 'express-rate-limit';
 import mongoose from 'mongoose';
 import dotenv from 'dotenv';
 
-// Importer les routes (en ES module, donc .js obligatoire)
+// Routes (ESM, .js extension required)
 import authRoutes from './routes/auth.js';
 import plansRoutes from './routes/plans.js';
 import subscriptionsRoutes from './routes/subscriptions.js';
 import usersRoutes from './routes/users.js';
 
+// -----------------------------------------------------------------------------
+// Configuration
+// -----------------------------------------------------------------------------
 dotenv.config();
 
 const app = express();
 
-// 1. IMPORTANT : activer trust proxy AVANT tout le reste (Vercel / proxy)
-app.set('trust proxy', 1); // ou true si tu veux être plus permissif
+// -----------------------------------------------------------------------------
+// Middleware configuration
+// -----------------------------------------------------------------------------
+/**
+ * Configure trust proxy.
+ * Required when the app runs behind a reverse proxy (e.g., Vercel).
+ */
+app.set('trust proxy', 1);
 
-// 2. CORS – configuration sécurisée (remplace * par ton domaine exact)
-app.use(cors({
-  origin: [
-    'https://fitlama-frontend.vercel.app',    // ← ton frontend déployé
-    'http://localhost:3000',                  // dev Next.js
-    'http://localhost:5173'                   // dev Vite si tu switch encore
-  ],
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
-  credentials: true, // si tu utilises cookies ou auth avec credentials
-  preflightContinue: false,
-  optionsSuccessStatus: 204
-}));
+/**
+ * Secure CORS configuration.
+ * Replace the wildcard with the exact domains that may access the API.
+ */
+app.use(
+  cors({
+    origin: [
+      'https://fitlama-frontend.vercel.app', // production frontend
+      'http://localhost:3000',               // Next.js dev
+      'http://localhost:5173',               // Vite dev
+    ],
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
+    credentials: true,
+    preflightContinue: false,
+    optionsSuccessStatus: 204,
+  })
+);
 
-// 3. JSON parser
+/**
+ * Parse incoming JSON payloads.
+ */
 app.use(express.json());
 
-// 4. Rate limiting – UNIQUEMENT sur les routes sensibles (pas global)
+/**
+ * Rate limiting.
+ * - `apiLimiter` applies globally to all API routes.
+ * - `authLimiter` is stricter and applies only to login/register endpoints.
+ */
 const apiLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100,                 // 100 requêtes max par IP
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100, // max requests per IP
   message: 'Trop de requêtes depuis cette IP, réessayez dans 15 minutes.',
   standardHeaders: true,
   legacyHeaders: false,
 });
 
 const authLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 5,                   // 5 tentatives login/register
+  windowMs: 15 * 60 * 1000,
+  max: 5, // login / register attempts
   message: 'Trop de tentatives de connexion. Réessayez dans 15 minutes.',
   standardHeaders: true,
   legacyHeaders: false,
 });
 
-// Appliquer le rate-limit spécifique
+// Apply specific limiters before route registration
 app.use('/api/auth/login', authLimiter);
 app.use('/api/auth/register', authLimiter);
-app.use('/api', apiLimiter); // limite générale sur toutes les API (100 req/15min)
+app.use('/api', apiLimiter);
 
-// 5. Connexion MongoDB
-mongoose.connect(process.env.MONGODB_URI)
-  .then(() => console.log('Connecté à MongoDB'))
-  .catch(err => {
-    console.error('Erreur connexion MongoDB:', err);
-    process.exit(1); // Arrête le serveur si MongoDB est mort
-  });
-
-// 6. Routes
+// -----------------------------------------------------------------------------
+// Route registration
+// -----------------------------------------------------------------------------
 app.use('/api/auth', authRoutes);
 app.use('/api/plans', plansRoutes);
 app.use('/api/subscriptions', subscriptionsRoutes);
 app.use('/api/users', usersRoutes);
 
-// 7. Route de test (supprime-la en prod)
-app.get('/health', (req, res) => {
+/**
+ * Health‑check endpoint.
+ * Useful for monitoring and should be removed or protected in production if desired.
+ */
+app.get('/health', (_req, res) => {
   res.status(200).json({
     status: 'ok',
     timestamp: new Date().toISOString(),
-    env: process.env.NODE_ENV || 'development'
+    env: process.env.NODE_ENV || 'development',
   });
 });
 
-// 8. Lancement serveur
+// -----------------------------------------------------------------------------
+// Server bootstrap
+// -----------------------------------------------------------------------------
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => {
-  console.log(`Serveur démarré sur le port ${PORT}`);
-  console.log(`Environnement : ${process.env.NODE_ENV || 'development'}`);
+
+/**
+ * Initialise the application:
+ * 1. Connect to MongoDB.
+ * 2. Start the HTTP server.
+ * 3. Register graceful shutdown handlers.
+ */
+async function startServer() {
+  try {
+    await mongoose.connect(process.env.MONGODB_URI);
+    console.log('✅ Connecté à MongoDB');
+  } catch (err) {
+    console.error('❌ Erreur connexion MongoDB:', err);
+    process.exit(1);
+  }
+
+  const server = app.listen(PORT, () => {
+    console.log(`🚀 Serveur démarré sur le port ${PORT}`);
+    console.log(`⚙️ Environnement : ${process.env.NODE_ENV || 'development'}`);
+  });
+
+  // Graceful shutdown on termination signals
+  const shutdown = () => {
+    console.log('\n🛑 Signal de fermeture reçu, arrêt du serveur...');
+    server.close(() => {
+      mongoose.disconnect().finally(() => {
+        console.log('🔌 Connexion MongoDB fermée');
+        process.exit(0);
+      });
+    });
+  };
+
+  process.on('SIGINT', shutdown);
+  process.on('SIGTERM', shutdown);
+}
+
+// Capture unhandled promise rejections to avoid silent failures
+process.on('unhandledRejection', (reason) => {
+  console.error('⚠️ Rejet de promesse non géré:', reason);
 });
+
+startServer();
